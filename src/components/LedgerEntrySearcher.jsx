@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { connect } from "react-redux";
 import { injectIntl } from "react-intl";
 import { Chip } from "@mui/material";
@@ -14,7 +14,7 @@ import {
   withHistory,
   withModulesManager,
 } from "@openimis/fe-core";
-import { fetchAccountingPeriodsMock, fetchLedgerEntriesMock } from "../actions";
+import { fetchAccountingPeriods, fetchLedgerEntries } from "../actions";
 import { DEFAULT_PAGE_SIZE, ROWS_PER_PAGE_OPTIONS } from "../constants";
 import LedgerEntryFilter from "./LedgerEntryFilter";
 
@@ -104,19 +104,23 @@ const LedgerEntrySearcher = ({
   accountingPeriods,
   fetchingAccountingPeriods,
   fetchedAccountingPeriods,
-  fetchLedgerEntriesMock,
-  fetchAccountingPeriodsMock,
+  fetchLedgerEntries,
+  fetchAccountingPeriods,
 }) => {
   const [expandedEntryId, setExpandedEntryId] = useState(null);
+  // Populated by filtersToQueryParams right before the base Searcher calls
+  // fetch(), which only forwards the raw params string array.
+  const fetchContextRef = useRef({ filters: {}, pageInfo: {} });
 
   useEffect(() => {
     if (!fetchedAccountingPeriods && !fetchingAccountingPeriods) {
-      fetchAccountingPeriodsMock();
+      fetchAccountingPeriods();
     }
-  }, [fetchedAccountingPeriods, fetchingAccountingPeriods, fetchAccountingPeriodsMock]);
+  }, [fetchedAccountingPeriods, fetchingAccountingPeriods, fetchAccountingPeriods]);
 
-  const fetch = (params) => {
-    fetchLedgerEntriesMock(params);
+  const fetch = () => {
+    const { filters, pageInfo } = fetchContextRef.current;
+    return fetchLedgerEntries(filters, pageInfo);
   };
 
   const defaultFilters = () => {
@@ -135,6 +139,25 @@ const LedgerEntrySearcher = ({
   const rowIdentifier = (entry) => entry.id;
 
   const filtersToQueryParams = (state) => {
+    const valueOf = (key) => state.filters?.[key]?.value ?? null;
+    const partyValue = valueOf("partyAnalyticValueId");
+    const funderValue = valueOf("funderAnalyticValueId");
+    fetchContextRef.current = {
+      filters: {
+        journal: typeof valueOf("journal") === "string" ? valueOf("journal") : null,
+        accountingPeriodId:
+          valueOf("accountingPeriodId") === ALL_PERIODS_FILTER_VALUE ? null : valueOf("accountingPeriodId"),
+        sourceEventType: typeof valueOf("sourceEventType") === "string" ? valueOf("sourceEventType") : null,
+        partyAnalyticValueId: partyValue?.analyticValueId ?? partyValue,
+        funderAnalyticValueId: funderValue?.analyticValueId ?? funderValue,
+      },
+      pageInfo: {
+        first: state.pageSize,
+        after: state.afterCursor,
+        before: state.beforeCursor,
+        orderBy: state.orderBy,
+      },
+    };
     const params = Object.keys(state.filters)
       .filter((key) => !!state.filters[key]?.filter)
       .map((key) => state.filters[key].filter);
@@ -331,8 +354,8 @@ const mapStateToProps = (state) => ({
 });
 
 const mapDispatchToProps = {
-  fetchLedgerEntriesMock,
-  fetchAccountingPeriodsMock,
+  fetchLedgerEntries,
+  fetchAccountingPeriods,
 };
 
 export { LEDGER_ENTRY_SEARCHER_CONTRIBUTION_KEY };

@@ -6,6 +6,7 @@ import { createStore, combineReducers, applyMiddleware } from "redux";
 import { thunk } from "redux-thunk";
 import { IntlProvider } from "react-intl";
 import { initialState as ledgerInitialState } from "../../src/reducer";
+import { graphqlWithVariables } from "@openimis/fe-core";
 import LedgerEntrySearcher from "../../src/components/LedgerEntrySearcher";
 
 const searcherSpy = vi.fn();
@@ -216,14 +217,13 @@ describe("LedgerEntrySearcher", () => {
     expect(props.defaultFilters).toEqual({});
   });
 
-  it("calls fetch with params from filtersToQueryParams", () => {
-    const fetchMock = vi.fn();
+  it("fetch dispatches the real fetchLedgerEntries with the flattened filters and page info", async () => {
     const store = buildStore({
       accountingPeriods: {
         isFetching: false,
         isFetched: true,
         error: null,
-        items: [{ id: "1", status: "open" }],
+        items: [{ id: "1", code: "2026-07", status: "open" }],
       },
       ledgerEntries: {
         isFetching: false,
@@ -237,7 +237,7 @@ describe("LedgerEntrySearcher", () => {
     render(
       <Provider store={store}>
         <IntlProvider locale="en" messages={{}}>
-          <LedgerEntrySearcher fetch={fetchMock} />
+          <LedgerEntrySearcher />
         </IntlProvider>
       </Provider>,
     );
@@ -245,6 +245,36 @@ describe("LedgerEntrySearcher", () => {
     const props = searcherSpy.mock.calls.at(-1)[0];
     expect(props.fetch).toBeDefined();
     expect(props.filtersToQueryParams).toBeDefined();
+
+    graphqlWithVariables.mockClear();
+    props.filtersToQueryParams({
+      filters: {
+        journal: { value: "BANK", filter: 'journal: "BANK"' },
+        accountingPeriodId: { value: "1", filter: 'accountingPeriod: "1"' },
+        sourceEventType: { value: "claim_payment", filter: 'sourceEventType: "claim_payment"' },
+      },
+      pageSize: 10,
+      afterCursor: null,
+      beforeCursor: null,
+      orderBy: "-postedAt",
+    });
+    await props.fetch();
+
+    expect(graphqlWithVariables).toHaveBeenCalled();
+    const [operation, variables] = graphqlWithVariables.mock.calls.at(-1);
+    expect(operation).toContain("ledger_entries");
+    expect(variables).toEqual({
+      journal: "BANK",
+      accountingPeriodCode: "2026-07",
+      party: null,
+      funder: null,
+      sourceEventType: "claim_payment",
+      first: 10,
+      after: null,
+      before: null,
+      last: null,
+      orderBy: ["-postedAt"],
+    });
   });
 
   it("renders items with row click handler", () => {
