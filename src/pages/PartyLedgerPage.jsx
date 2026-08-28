@@ -32,7 +32,6 @@ import { fetchPartyLedgerBalance } from "../actions";
 const StyledPage = styled("div")(({ theme }) => ({
   "& .page": theme.page ?? {},
 }));
-
 const StyledPaper = styled(Paper)(({ theme }) => ({
   ...(theme?.paper?.paper ?? {}),
   boxShadow: "none",
