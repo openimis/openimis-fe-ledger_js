@@ -92,16 +92,118 @@
       "allPeriods": "All periods"
     },
     "periods": {
-      "pageTitle": "Accounting Periods"
+      "pageTitle": "Accounting Periods",
+      "empty": "No accounting periods yet.",
+      "status": {
+        "open": "Open",
+        "locked": "Locked",
+        "closed": "Closed"
+      },
+      "action": {
+        "open": "Open",
+        "lock": "Lock",
+        "close": "Close",
+        "reopen": "Reopen"
+      },
+      "table": {
+        "period": "Period",
+        "status": "Status",
+        "actions": "Actions"
+      },
+      "openForm": {
+        "title": "Open a New Period",
+        "startDate": "Start Date",
+        "endDate": "End Date"
+      },
+      "rejectionTitle": "Action rejected",
+      "actionUnavailable": "No action available for this period",
+      "adminOnlyNotice": "Period lifecycle actions require finance-administrator rights.",
+      "filter": {
+        "status": "Status",
+        "all": "All",
+        "noResults": "No periods match the selected status."
+      }
     },
     "reviewQueue": {
-      "pageTitle": "Replication Review Queue"
+      "pageTitle": "Replication Review Queue",
+      "empty": "No manual review items found.",
+      "filter": {
+        "status": "Status",
+        "all": "All"
+      },
+      "status": {
+        "pending": "Pending",
+        "resolved": "Resolved"
+      },
+      "table": {
+        "status": "Status",
+        "originalEntry": "Original entry",
+        "reason": "Reason",
+        "targetSystem": "Target system",
+        "actions": "Actions"
+      },
+      "action": {
+        "resolve": "Resolve",
+        "view": "View"
+      },
+      "dialog": {
+        "title": "Resolve manual review item",
+        "originalEntry": "Original flagged entry (read-only)",
+        "entry": "Entry",
+        "period": "Period",
+        "party": "Party",
+        "journal": "Journal",
+        "postedAt": "Posted date",
+        "noReason": "No rejection reason provided.",
+        "correctingEntry": "Correcting entry",
+        "noCandidates": "No correcting entries match this party and period.",
+        "resolvedEntry": "Correcting entry",
+        "resolutionNote": "Resolution note",
+        "close": "Close",
+        "resolve": "Resolve"
+      }
     },
     "export": {
-      "pageTitle": "Period Export"
+      "pageTitle": "Period Export",
+      "resultTitle": "Export result",
+      "period": "Accounting Period",
+      "format": "Export format",
+      "formats": {
+        "generic": "Generic CSV",
+        "ohadaFec": "OHADA / FEC CSV"
+      },
+      "trigger": "Start export",
+      "statusLabel": "Export status",
+      "status": {
+        "in_progress": "In progress",
+        "complete": "Complete",
+        "failed": "Failed"
+      },
+      "numbering": {
+        "provisional": "Provisional numbering",
+        "final": "Final numbering"
+      },
+      "download": "Download export",
+      "failure": "The export failed. Please try again."
     },
     "deployment": {
-      "pageTitle": "Deployment Configuration"
+      "pageTitle": "Deployment Configuration",
+      "operatingMode": "Operating mode",
+      "operatingModes": {
+        "localOnly": "Local only",
+        "replicated": "Replicated"
+      },
+      "externalSystem": "External system",
+      "currencyCode": "Currency",
+      "retainedEarningsAccount": "Retained earnings account",
+      "save": "Save configuration",
+      "saveError": "The deployment configuration could not be saved.",
+      "forwardOnly": {
+        "title": "Confirm operating mode change",
+        "message": "This change applies only going forward. Existing ledger entries will not be replicated retroactively. Confirm to continue.",
+        "cancel": "Cancel",
+        "confirm": "Confirm and save"
+      }
     }
   }
 }

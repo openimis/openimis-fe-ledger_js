@@ -8,14 +8,15 @@ export const ACTION_TYPE = {
   ACCOUNTING_PERIODS: "LEDGER_ACCOUNTING_PERIODS",
   PARTY_SEARCH: "LEDGER_PARTY_SEARCH",
   PARTY_LEDGER_BALANCE: "LEDGER_PARTY_LEDGER_BALANCE",
+  PARTY_LEDGER_BALANCE_RESET: "LEDGER_PARTY_LEDGER_BALANCE_RESET",
   FUNDER_SEARCH: "LEDGER_FUNDER_SEARCH",
+  JOURNAL_SEARCH: "LEDGER_JOURNAL_SEARCH",
   FUNDER_ACTIVITY_REPORT: "LEDGER_FUNDER_ACTIVITY_REPORT",
   MANUAL_REVIEW_QUEUE: "LEDGER_MANUAL_REVIEW_QUEUE",
   DEPLOYMENT_CONFIGURATION: "LEDGER_DEPLOYMENT_CONFIGURATION",
   EXTERNAL_SYSTEMS: "LEDGER_EXTERNAL_SYSTEMS",
   CURRENCY_CODES: "LEDGER_CURRENCY_CODES",
   CHART_OF_ACCOUNTS: "LEDGER_CHART_OF_ACCOUNTS",
-
   OPEN_ACCOUNTING_PERIOD: "LEDGER_OPEN_ACCOUNTING_PERIOD",
   LOCK_ACCOUNTING_PERIOD: "LEDGER_LOCK_ACCOUNTING_PERIOD",
   CLOSE_ACCOUNTING_PERIOD: "LEDGER_CLOSE_ACCOUNTING_PERIOD",
@@ -55,13 +56,15 @@ const initialState = {
   funderSearch: { isFetching: false, isFetched: false, error: null, results: [] },
   funderActivityReport: { isFetching: false, isFetched: false, error: null, data: null },
 
+  journalSearch: { isFetching: false, isFetched: false, error: null, results: [], fetchedType: null },
+
   accountingPeriods: { isFetching: false, isFetched: false, error: null, items: [] },
   periodMutation: { submitting: false, error: null, lastRejectionReason: null },
 
   manualReviewQueue: { isFetching: false, isFetched: false, error: null, items: [] },
   reviewResolution: { submitting: false, error: null },
 
-  exportJobs: { byPeriodId: {} },
+  exportJobs: { byPeriodId: {}, error: null },
 
   deploymentConfiguration: { isFetching: false, isFetched: false, error: null, data: null, submitting: false },
 
@@ -70,20 +73,62 @@ const initialState = {
   chartOfAccounts: { isFetching: false, isFetched: false, error: null, items: [] },
 };
 
+const decodeLedgerReferenceId = (id) => {
+  if (id === null || id === undefined) return id;
+  const decoded = decodeId(id);
+  if (decoded !== id || /^\d+$/.test(id)) return decoded;
+  try {
+    const parts = atob(id).split(":");
+    return parts.length > 1 ? parts[1] : decoded;
+  } catch {
+    return decoded;
+  }
+};
+
+// Backend AccountingPeriod.status is a SmallIntegerField (1=open, 2=locked,
+// 3=closed) while the frontend view-model uses strings. Normalize on ingest so
+// components keep comparing `status === "open"` etc.
+const PERIOD_STATUS_LABELS = { 1: "open", 2: "locked", 3: "closed", A_1: "open", A_2: "locked", A_3: "closed" };
+const mapPeriodStatus = (status) => PERIOD_STATUS_LABELS[status] ?? status;
+
+// Derives the legacy `{ analyticValueId, displayName }` tag view-model from the
+// real backend's `analyticTags` (filtered by axis code). Returns null when the
+// line carries no tag for that axis.
+const mapAnalyticTag = (analyticTags, axisCode) => {
+  const value = (analyticTags || []).find(
+    (tag) => tag?.analyticValue?.axis?.code?.toLowerCase() === axisCode,
+  )?.analyticValue;
+  return value ? { analyticValueId: value.id, displayName: value.displayName } : null;
+};
+
+const mapLedgerEntryLine = (line) => ({
+  id: decodeLedgerReferenceId(line.id),
+  account: line.account,
+  debit: line.debit,
+  credit: line.credit,
+  partyTag: line.partyTag || mapAnalyticTag(line.analyticTags, "party"),
+  funderTag: line.funderTag || mapAnalyticTag(line.analyticTags, "funder"),
+});
+
 const mapLedgerEntryNode = (node) => {
-  const lines = (node?.lines || []).map((line) => ({
-    id: decodeId(line.id),
-    account: line.account,
-    debit: line.debit,
-    credit: line.credit,
-    partyTag: line.partyTag,
-    funderTag: line.funderTag,
-  }));
+  // The backend returns the legs as a Relay connection
+  // (`transaction.legs.edges[].node`); the flat `lines` array is kept as a
+  // fallback for mock payloads.
+  const legs = node?.transaction?.legs;
+  const rawLines =
+    node?.lines || (Array.isArray(legs) ? legs : legs?.edges?.map((edge) => edge?.node)) || [];
+  const lines = rawLines.filter(Boolean).map(mapLedgerEntryLine);
   return {
-    id: decodeId(node.id),
+    id: decodeLedgerReferenceId(node.id),
     journal: node.journal,
-    accountingPeriod: node.accountingPeriod,
-    sourceEventType: node.sourceEventType,
+    accountingPeriod: node.accountingPeriod
+      ? {
+          ...node.accountingPeriod,
+          id: decodeLedgerReferenceId(node.accountingPeriod.id),
+          status: mapPeriodStatus(node.accountingPeriod.status),
+        }
+      : node.accountingPeriod,
+    sourceEventType: node.sourceEventType?.toLowerCase(),
     sourceEventReference: node.sourceEventReference,
     postedAt: node.postedAt,
     lines,
@@ -93,7 +138,32 @@ const mapLedgerEntryNode = (node) => {
 
 const firstErrorMessage = (errors) => (errors && errors.length ? errors[0].message : null);
 
-const mapAccountingPeriod = (period) => (period ? { ...period, id: decodeId(period.id) } : period);
+const mapDeploymentConfiguration = (configuration) => {
+  if (!configuration) return configuration;
+  return {
+    ...configuration,
+    retainedEarningsAccount: configuration.retainedEarningsAccount
+      ? {
+          ...configuration.retainedEarningsAccount,
+          id: decodeId(configuration.retainedEarningsAccount.id),
+        }
+      : configuration.retainedEarningsAccount,
+  };
+};
+
+// Mock review items use readable ids (e.g. "review-1"), while GraphQL
+// responses use openIMIS base64 ids. Keep both forms valid in the reducer.
+const decodeManualReviewId = (id) => {
+  if (id === null || id === undefined) return id;
+  try {
+    return decodeId(id);
+  } catch {
+    return id;
+  }
+};
+
+const mapAccountingPeriod = (period) =>
+  period ? { ...period, id: decodeId(period.id), status: mapPeriodStatus(period.status) } : period;
 
 // Shared by lock/close/reopen (US4): replaces the matching period in
 // `accountingPeriods.items` with the mutation's returned period, or (if the
@@ -172,10 +242,9 @@ function reducer(state = initialState, action) {
         accountingPeriods: { ...state.accountingPeriods, isFetching: true, isFetched: false, error: null },
       };
     case resp(ACTION_TYPE.ACCOUNTING_PERIODS): {
-      const items = (action.payload?.data?.accountingPeriods || []).map((period) => ({
-        ...period,
-        id: decodeId(period.id),
-      }));
+      const items = (action.payload?.data?.accountingPeriods?.edges || []).map((edge) =>
+        mapAccountingPeriod(edge.node),
+      );
       return {
         ...state,
         accountingPeriods: {
@@ -202,11 +271,25 @@ function reducer(state = initialState, action) {
           isFetching: false,
           isFetched: true,
           error: formatGraphQLError(action.payload),
-          results: (action.payload?.data?.analyticValues || []).map((r) => ({ ...r, id: decodeId(r.analyticValueId) })),
+          results: (action.payload?.data?.analyticValue?.edges || []).map((edge) => {
+            const node = edge.node;
+            return {
+              ...node,
+              analyticValueId: node.id,
+              id: decodeId(node.id),
+              partyType: node.partyType?.toLowerCase(),
+            };
+          }),
         },
       };
     case err(ACTION_TYPE.PARTY_SEARCH):
       return { ...state, partySearch: { ...state.partySearch, isFetching: false, error: formatServerError(action.payload) } };
+
+    case ACTION_TYPE.PARTY_LEDGER_BALANCE_RESET:
+      return {
+        ...state,
+        partyLedgerBalance: { isFetching: false, isFetched: false, error: null, data: null },
+      };
 
     case req(ACTION_TYPE.PARTY_LEDGER_BALANCE):
       return {
@@ -245,11 +328,37 @@ function reducer(state = initialState, action) {
           isFetching: false,
           isFetched: true,
           error: formatGraphQLError(action.payload),
-          results: (action.payload?.data?.analyticValues || []).map((r) => ({ ...r, id: decodeId(r.analyticValueId) })),
+          results: (action.payload?.data?.analyticValue?.edges || []).map((edge) => {
+            const node = edge.node;
+            return {
+              ...node,
+              analyticValueId: node.id,
+              id: decodeId(node.id),
+              partyType: node.partyType?.toLowerCase(),
+            };
+          }),
         },
       };
     case err(ACTION_TYPE.FUNDER_SEARCH):
       return { ...state, funderSearch: { ...state.funderSearch, isFetching: false, error: formatServerError(action.payload) } };
+
+    case req(ACTION_TYPE.JOURNAL_SEARCH):
+      return { ...state, journalSearch: { ...state.journalSearch, isFetching: true, isFetched: false, error: null } };
+    case resp(ACTION_TYPE.JOURNAL_SEARCH):
+      return {
+        ...state,
+        journalSearch: {
+          isFetching: false,
+          isFetched: true,
+          error: formatGraphQLError(action.payload),
+          results: (action.payload?.data?.ledgerJournal?.edges || [])
+            .map((edge) => edge?.node)
+            .filter(Boolean),
+          fetchedType: action.meta?.journalType ?? null,
+        },
+      };
+    case err(ACTION_TYPE.JOURNAL_SEARCH):
+      return { ...state, journalSearch: { ...state.journalSearch, isFetching: false, error: formatServerError(action.payload) } };
 
     case req(ACTION_TYPE.FUNDER_ACTIVITY_REPORT):
       return {
@@ -294,7 +403,11 @@ function reducer(state = initialState, action) {
     case err(ACTION_TYPE.OPEN_ACCOUNTING_PERIOD):
       return {
         ...state,
-        periodMutation: { submitting: false, error: formatServerError(action.payload), lastRejectionReason: null },
+        periodMutation: {
+          submitting: false,
+          error: formatServerError(action.payload)?.message ?? null,
+          lastRejectionReason: null,
+        },
       };
 
     case req(ACTION_TYPE.LOCK_ACCOUNTING_PERIOD):
@@ -314,7 +427,11 @@ function reducer(state = initialState, action) {
     case err(ACTION_TYPE.REOPEN_ACCOUNTING_PERIOD):
       return {
         ...state,
-        periodMutation: { submitting: false, error: formatServerError(action.payload), lastRejectionReason: null },
+        periodMutation: {
+          submitting: false,
+          error: formatServerError(action.payload)?.message ?? null,
+          lastRejectionReason: null,
+        },
       };
 
     // --- User Story 5: Manual Review Queue --------------------------------
@@ -330,7 +447,10 @@ function reducer(state = initialState, action) {
           isFetching: false,
           isFetched: true,
           error: formatGraphQLError(action.payload),
-          items: (action.payload?.data?.manualReviewQueue || []).map((item) => ({ ...item, id: decodeId(item.id) })),
+          items: (action.payload?.data?.manualReviewQueue || []).map((item) => ({
+            ...item,
+            id: decodeManualReviewId(item.id),
+          })),
         },
       };
     case err(ACTION_TYPE.MANUAL_REVIEW_QUEUE):
@@ -354,13 +474,15 @@ function reducer(state = initialState, action) {
         manualReviewQueue: {
           ...state.manualReviewQueue,
           items: state.manualReviewQueue.items.map((item) =>
-            item.id === decodeId(updated?.id) ? { ...item, ...updated, id: decodeId(updated.id) } : item,
+            item.id === decodeManualReviewId(updated?.id)
+              ? { ...item, ...updated, id: decodeManualReviewId(updated.id) }
+              : item,
           ),
         },
       };
     }
     case err(ACTION_TYPE.RESOLVE_MANUAL_REVIEW_ITEM):
-      return { ...state, reviewResolution: { submitting: false, error: formatServerError(action.payload) } };
+      return { ...state, reviewResolution: { submitting: false, error: formatServerError(action.payload)?.message ?? null } };
 
     // --- User Story 6: Period Export ---------------------------------------
     case resp(ACTION_TYPE.EXPORT_ACCOUNTING_PERIOD): {
@@ -369,7 +491,11 @@ function reducer(state = initialState, action) {
       if (!job) return state;
       return {
         ...state,
-        exportJobs: { byPeriodId: { ...state.exportJobs.byPeriodId, [job.accountingPeriodId]: job } },
+        exportJobs: {
+          ...state.exportJobs,
+          error: null,
+          byPeriodId: { ...state.exportJobs.byPeriodId, [job.accountingPeriodId]: job },
+        },
       };
     }
     case resp(ACTION_TYPE.EXPORT_SEQUENCES): {
@@ -377,9 +503,16 @@ function reducer(state = initialState, action) {
       if (!job) return state;
       return {
         ...state,
-        exportJobs: { byPeriodId: { ...state.exportJobs.byPeriodId, [job.accountingPeriodId]: job } },
+        exportJobs: {
+          ...state.exportJobs,
+          error: null,
+          byPeriodId: { ...state.exportJobs.byPeriodId, [job.accountingPeriodId]: job },
+        },
       };
     }
+    case err(ACTION_TYPE.EXPORT_ACCOUNTING_PERIOD):
+    case err(ACTION_TYPE.EXPORT_SEQUENCES):
+      return { ...state, exportJobs: { ...state.exportJobs, error: formatServerError(action.payload)?.message ?? null } };
 
     // --- User Story 7: Deployment Configuration ----------------------------
     case req(ACTION_TYPE.DEPLOYMENT_CONFIGURATION):
@@ -392,7 +525,7 @@ function reducer(state = initialState, action) {
       };
     case resp(ACTION_TYPE.DEPLOYMENT_CONFIGURATION): {
       const data = action.payload?.data;
-      const gqlError = formatGraphQLError(action.payload);
+      const gqlError = formatGraphQLError(action.payload)?.message ?? null;
       return {
         ...state,
         deploymentConfiguration: {
@@ -400,7 +533,7 @@ function reducer(state = initialState, action) {
           isFetching: false,
           isFetched: true,
           error: gqlError,
-          data: data?.deploymentConfiguration || null,
+          data: mapDeploymentConfiguration(data?.deploymentConfiguration),
         },
         externalSystems: { isFetching: false, isFetched: true, error: gqlError, items: data?.externalSystems || [] },
         currencyCodes: { isFetching: false, isFetched: true, error: gqlError, items: data?.currencyCodes || [] },
@@ -413,7 +546,7 @@ function reducer(state = initialState, action) {
       };
     }
     case err(ACTION_TYPE.DEPLOYMENT_CONFIGURATION): {
-      const serverError = formatServerError(action.payload);
+      const serverError = formatServerError(action.payload)?.message ?? null;
       return {
         ...state,
         deploymentConfiguration: { ...state.deploymentConfiguration, isFetching: false, error: serverError },
@@ -437,14 +570,18 @@ function reducer(state = initialState, action) {
           ...state.deploymentConfiguration,
           submitting: false,
           error: null,
-          data: result?.deploymentConfiguration || state.deploymentConfiguration.data,
+          data: mapDeploymentConfiguration(result?.deploymentConfiguration) || state.deploymentConfiguration.data,
         },
       };
     }
     case err(ACTION_TYPE.CONFIGURE_DEPLOYMENT):
       return {
         ...state,
-        deploymentConfiguration: { ...state.deploymentConfiguration, submitting: false, error: formatServerError(action.payload) },
+        deploymentConfiguration: {
+          ...state.deploymentConfiguration,
+          submitting: false,
+          error: formatServerError(action.payload)?.message ?? null,
+        },
       };
 
     default:

@@ -15,7 +15,7 @@ describe("Reducer", () => {
     expect(state.ledgerEntries.filters.journal).toBe("BANK");
   });
 
-  it("handles LEDGER_LEDGER_ENTRIES_RESP", () => {
+  it("handles LEDGER_LEDGER_ENTRIES_RESP with the real transaction/legs connection", () => {
     const action = {
       type: `${ACTION_TYPE.LEDGER_ENTRIES}_RESP`,
       payload: {
@@ -24,17 +24,140 @@ describe("Reducer", () => {
             totalCount: 10,
             pageInfo: { hasNextPage: true, hasPreviousPage: false, startCursor: "0", endCursor: "9" },
             edges: [
-              { node: { id: "QWNjb3VudGluZ1BlcmlvZDox", journal: { code: "BANK" }, lines: [] } }
-            ]
-          }
-        }
-      }
+              {
+                node: {
+                  id: "TGVkZ2VyRW50cnk6MQ==",
+                  journal: { code: "BANK", name: "Bank" },
+                  accountingPeriod: {
+                    id: "QWNjb3VudGluZ1BlcmlvZDox",
+                    code: "2026-07",
+                    name: "Juillet 2026",
+                    status: 1,
+                  },
+                  sourceEventType: "CLAIM_PAYMENT",
+                  sourceEventReference: "CLM-2026-0001",
+                  postedAt: "2026-07-24T10:00:00Z",
+                  transaction: {
+                    balance: "FCFA0",
+                    legs: {
+                      edges: [
+                        {
+                          node: {
+                            id: "TGVnOjE=",
+                            account: { code: "4010", name: "Debit" },
+                            debit: "12500.00",
+                            credit: "0",
+                          },
+                        },
+                        {
+                          node: {
+                            id: "TGVnOjI=",
+                            account: { code: "5120", name: "Cash" },
+                            debit: "0",
+                            credit: "12500.00",
+                          },
+                        },
+                      ],
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        },
+      },
     };
     const state = reducer(initialState, action);
     expect(state.ledgerEntries.isFetching).toBe(false);
     expect(state.ledgerEntries.isFetched).toBe(true);
     expect(state.ledgerEntries.items.length).toBe(1);
-    expect(state.ledgerEntries.pageInfo.totalCount).toBe(10);
+    expect(state.ledgerEntries.pageInfo).toEqual({
+      totalCount: 10,
+      hasNextPage: true,
+      hasPreviousPage: false,
+      startCursor: "0",
+      endCursor: "9",
+    });
+    const entry = state.ledgerEntries.items[0];
+    expect(entry.id).toBe("1");
+    expect(entry.accountingPeriod).toEqual({
+      id: "1",
+      code: "2026-07",
+      name: "Juillet 2026",
+      status: "open",
+    });
+    expect(entry.sourceEventType).toBe("claim_payment");
+    expect(entry.lines).toEqual([
+      {
+        id: "1",
+        account: { code: "4010", name: "Debit" },
+        debit: "12500.00",
+        credit: "0",
+        partyTag: null,
+        funderTag: null,
+      },
+      {
+        id: "2",
+        account: { code: "5120", name: "Cash" },
+        debit: "0",
+        credit: "12500.00",
+        partyTag: null,
+        funderTag: null,
+      },
+    ]);
+    // Decimal strings coming from the backend must be summed as numbers.
+    expect(entry.totals).toEqual({ debit: 12500, credit: 12500, balance: 0 });
+  });
+
+  it("maps analytic tags to party/funder tags and keeps the flat `lines` fallback", () => {
+    const action = {
+      type: `${ACTION_TYPE.LEDGER_ENTRIES}_RESP`,
+      payload: {
+        data: {
+          ledgerEntries: {
+            totalCount: 1,
+            pageInfo: {},
+            edges: [
+              {
+                node: {
+                  id: "TGVkZ2VyRW50cnk6Mg==",
+                  lines: [
+                    {
+                      id: "TGVnOjM=",
+                      account: { code: "4010", name: "Debit" },
+                      debit: 100,
+                      credit: null,
+                      analyticTags: [
+                        {
+                          analyticValue: {
+                            id: "QW5hbHl0aWNWYWx1ZTox",
+                            displayName: "District Hospital",
+                            axis: { code: "party" },
+                          },
+                        },
+                        {
+                          analyticValue: {
+                            id: "QW5hbHl0aWNWYWx1ZToy",
+                            displayName: "GIZ",
+                            axis: { code: "funder" },
+                          },
+                        },
+                      ],
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        },
+      },
+    };
+    const state = reducer(initialState, action);
+    const entry = state.ledgerEntries.items[0];
+    expect(entry.lines).toHaveLength(1);
+    expect(entry.lines[0].partyTag).toEqual({ analyticValueId: "QW5hbHl0aWNWYWx1ZTox", displayName: "District Hospital" });
+    expect(entry.lines[0].funderTag).toEqual({ analyticValueId: "QW5hbHl0aWNWYWx1ZToy", displayName: "GIZ" });
+    expect(entry.totals).toEqual({ debit: 100, credit: 0, balance: 100 });
   });
 
   it("handles LEDGER_LEDGER_ENTRIES_ERR", () => {
@@ -55,22 +178,35 @@ describe("Reducer", () => {
     expect(state.accountingPeriods.isFetched).toBe(false);
   });
 
-  it("handles LEDGER_ACCOUNTING_PERIODS_RESP", () => {
+  it("handles LEDGER_ACCOUNTING_PERIODS_RESP (Relay connection, status normalized)", () => {
     const action = {
       type: `${ACTION_TYPE.ACCOUNTING_PERIODS}_RESP`,
       payload: {
         data: {
-          accountingPeriods: [
-            { id: "QWNjb3VudGluZ1BlcmlvZDox", startDate: "2026-07-01", endDate: "2026-07-31", status: "open" }
-          ]
-        }
-      }
+          accountingPeriods: {
+            totalCount: 1,
+            edges: [
+              {
+                node: {
+                  id: "QWNjb3VudGluZ1BlcmlvZDox",
+                  startDate: "2026-07-01",
+                  endDate: "2026-07-31",
+                  code: "2026-07",
+                  status: 1,
+                },
+              },
+            ],
+          },
+        },
+      },
     };
     const state = reducer(initialState, action);
     expect(state.accountingPeriods.isFetching).toBe(false);
     expect(state.accountingPeriods.isFetched).toBe(true);
     expect(state.accountingPeriods.items.length).toBe(1);
     expect(state.accountingPeriods.items[0].id).toBe("QWNjb3VudGluZ1BlcmlvZDox");
+    expect(state.accountingPeriods.items[0].status).toBe("open");
+    expect(state.accountingPeriods.items[0].code).toBe("2026-07");
   });
 
   it("handles LEDGER_PARTY_SEARCH_REQ", () => {
@@ -79,21 +215,26 @@ describe("Reducer", () => {
     expect(state.partySearch.isFetching).toBe(true);
   });
 
-  it("handles LEDGER_PARTY_SEARCH_RESP", () => {
+  it("handles LEDGER_PARTY_SEARCH_RESP (analyticValue connection)", () => {
     const action = {
       type: `${ACTION_TYPE.PARTY_SEARCH}_RESP`,
       payload: {
         data: {
-          analyticValues: [
-            { analyticValueId: "QWNjb3VudGluZ1BlcmlvZDox", displayName: "Party A" }
-          ]
-        }
-      }
+          analyticValue: {
+            edges: [
+              { node: { id: "QW5hbHl0aWNWYWx1ZTox", displayName: "Party A", partyType: "health_facility", funderCode: null, externalReference: "HF-1" } },
+            ],
+          },
+        },
+      },
     };
     const state = reducer(initialState, action);
     expect(state.partySearch.isFetching).toBe(false);
     expect(state.partySearch.isFetched).toBe(true);
     expect(state.partySearch.results.length).toBe(1);
+    expect(state.partySearch.results[0].analyticValueId).toBe("QW5hbHl0aWNWYWx1ZTox");
+    expect(state.partySearch.results[0].id).toBe("QW5hbHl0aWNWYWx1ZTox");
+    expect(state.partySearch.results[0].partyType).toBe("health_facility");
   });
 
   it("handles LEDGER_PARTY_SEARCH_ERR", () => {
@@ -140,21 +281,34 @@ describe("Reducer", () => {
     expect(state.partyLedgerBalance.error.message).toBe("Balance failed");
   });
 
-  it("handles LEDGER_FUNDER_SEARCH_RESP", () => {
+  it("handles LEDGER_PARTY_LEDGER_BALANCE_RESET", () => {
+    const withData = reducer(initialState, {
+      type: `${ACTION_TYPE.PARTY_LEDGER_BALANCE}_RESP`,
+      payload: { data: { partyLedgerBalance: { balance: 500, transactions: [] } } },
+    });
+    const state = reducer(withData, { type: `${ACTION_TYPE.PARTY_LEDGER_BALANCE_RESET}` });
+    expect(state.partyLedgerBalance).toEqual({ isFetching: false, isFetched: false, error: null, data: null });
+  });
+
+  it("handles LEDGER_FUNDER_SEARCH_RESP (analyticValue connection)", () => {
     const action = {
       type: `${ACTION_TYPE.FUNDER_SEARCH}_RESP`,
       payload: {
         data: {
-          analyticValues: [
-            { analyticValueId: "QWNjb3VudGluZ1BlcmlvZDox", displayName: "Funder A" }
-          ]
-        }
-      }
+          analyticValue: {
+            edges: [
+              { node: { id: "QW5hbHl0aWNWYWx1ZToy", displayName: "Funder A", partyType: null, funderCode: "GIZ", externalReference: "GIZ" } },
+            ],
+          },
+        },
+      },
     };
     const state = reducer(initialState, action);
     expect(state.funderSearch.isFetching).toBe(false);
     expect(state.funderSearch.isFetched).toBe(true);
     expect(state.funderSearch.results.length).toBe(1);
+    expect(state.funderSearch.results[0].analyticValueId).toBe("QW5hbHl0aWNWYWx1ZToy");
+    expect(state.funderSearch.results[0].id).toBe("QW5hbHl0aWNWYWx1ZToy");
   });
 
   it("handles LEDGER_FUNDER_ACTIVITY_REPORT_RESP", () => {
@@ -238,6 +392,17 @@ describe("Reducer", () => {
     expect(state.accountingPeriods.items.length).toBe(1);
   });
 
+  it("handles LEDGER_OPEN_ACCOUNTING_PERIOD_ERR with a string error message", () => {
+    const action = {
+      type: `${ACTION_TYPE.OPEN_ACCOUNTING_PERIOD}_ERR`,
+      payload: { message: "Network error" }
+    };
+    const state = reducer(initialState, action);
+    expect(state.periodMutation.submitting).toBe(false);
+    expect(state.periodMutation.error).toBe("Network error");
+    expect(state.periodMutation.lastRejectionReason).toBe(null);
+  });
+
   it("handles LEDGER_OPEN_ACCOUNTING_PERIOD_RESP with errors", () => {
     const action = {
       type: `${ACTION_TYPE.OPEN_ACCOUNTING_PERIOD}_RESP`,
@@ -303,6 +468,26 @@ describe("Reducer", () => {
     expect(state.manualReviewQueue.items[0].status).toBe("resolved");
   });
 
+  it("handles LEDGER_RESOLVE_MANUAL_REVIEW_ITEM_ERR", () => {
+    const action = {
+      type: `${ACTION_TYPE.RESOLVE_MANUAL_REVIEW_ITEM}_ERR`,
+      payload: { message: "Network error" },
+    };
+    const state = reducer(initialState, action);
+    expect(state.reviewResolution.submitting).toBe(false);
+    expect(state.reviewResolution.error).toBe("Network error");
+  });
+
+  it("handles LEDGER_RESOLVE_MANUAL_REVIEW_ITEM_ERR without a message", () => {
+    const action = {
+      type: `${ACTION_TYPE.RESOLVE_MANUAL_REVIEW_ITEM}_ERR`,
+      payload: null,
+    };
+    const state = reducer(initialState, action);
+    expect(state.reviewResolution.submitting).toBe(false);
+    expect(state.reviewResolution.error).toBe(null);
+  });
+
   it("handles LEDGER_EXPORT_ACCOUNTING_PERIOD_RESP", () => {
     const action = {
       type: `${ACTION_TYPE.EXPORT_ACCOUNTING_PERIOD}_RESP`,
@@ -332,6 +517,24 @@ describe("Reducer", () => {
     expect(state.exportJobs.byPeriodId["1"]).toBeDefined();
     expect(state.exportJobs.byPeriodId["1"].status).toBe("complete");
     expect(state.exportJobs.byPeriodId["1"].downloadUrl).toBe("http://example.com/export.csv");
+  });
+
+  it("handles LEDGER_EXPORT_ACCOUNTING_PERIOD_ERR", () => {
+    const action = {
+      type: `${ACTION_TYPE.EXPORT_ACCOUNTING_PERIOD}_ERR`,
+      payload: { message: "Network error" },
+    };
+    const state = reducer(initialState, action);
+    expect(state.exportJobs.error).toBe("Network error");
+  });
+
+  it("handles LEDGER_EXPORT_SEQUENCES_ERR", () => {
+    const action = {
+      type: `${ACTION_TYPE.EXPORT_SEQUENCES}_ERR`,
+      payload: { message: "Network error" },
+    };
+    const state = reducer(initialState, action);
+    expect(state.exportJobs.error).toBe("Network error");
   });
 
   it("handles LEDGER_DEPLOYMENT_CONFIGURATION_REQ", () => {
@@ -388,5 +591,25 @@ describe("Reducer", () => {
     expect(state.deploymentConfiguration.submitting).toBe(false);
     expect(state.deploymentConfiguration.error).toBe(null);
     expect(state.deploymentConfiguration.data.operatingMode).toBe("single");
+  });
+
+  it("handles LEDGER_DEPLOYMENT_CONFIGURATION_ERR", () => {
+    const action = {
+      type: `${ACTION_TYPE.DEPLOYMENT_CONFIGURATION}_ERR`,
+      payload: { message: "Network error" },
+    };
+    const state = reducer(initialState, action);
+    expect(state.deploymentConfiguration.error).toBe("Network error");
+    expect(state.externalSystems.error).toBe("Network error");
+  });
+
+  it("handles LEDGER_CONFIGURE_DEPLOYMENT_ERR", () => {
+    const action = {
+      type: `${ACTION_TYPE.CONFIGURE_DEPLOYMENT}_ERR`,
+      payload: { message: "Network error" },
+    };
+    const state = reducer(initialState, action);
+    expect(state.deploymentConfiguration.submitting).toBe(false);
+    expect(state.deploymentConfiguration.error).toBe("Network error");
   });
 });

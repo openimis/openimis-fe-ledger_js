@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { injectIntl } from "react-intl";
 import { connect } from "react-redux";
 import {
@@ -27,7 +27,7 @@ import PartyPicker from "../pickers/PartyPicker";
 import AccountingPeriodPicker from "../pickers/AccountingPeriodPicker";
 import { hasLedgerReportingRight } from "../utils/permissions";
 import { formatSignedBalance } from "../utils/balance";
-import { fetchPartyLedgerBalanceMock } from "../actions";
+import { fetchPartyLedgerBalance, resetPartyLedgerBalance } from "../actions";
 
 const StyledPage = styled("div")(({ theme }) => ({
   "& .page": theme.page ?? {},
@@ -67,26 +67,30 @@ const StyledPaper = styled(Paper)(({ theme }) => ({
   "& .item": theme.paper?.item ?? {},
 }));
 
-const PartyLedgerPage = ({ intl, modulesManager, rights, partyLedgerBalance, fetchPartyLedgerBalanceMock }) => {
+const PartyLedgerPage = ({ intl, modulesManager, rights, partyLedgerBalance, fetchPartyLedgerBalance, resetPartyLedgerBalance }) => {
   const [selectedParty, setSelectedParty] = useState(null);
   const [selectedPeriodId, setSelectedPeriodId] = useState(null);
+  const hasSelectedFilters = useRef(false);
+  const ledgerData = partyLedgerBalance?.data || null;
+  const balanceInfo = useMemo(() => formatSignedBalance(ledgerData?.balance ?? 0), [ledgerData?.balance]);
+
+  useEffect(() => {
+    if (selectedParty?.analyticValueId && selectedPeriodId) {
+      hasSelectedFilters.current = true;
+      fetchPartyLedgerBalance(selectedParty.analyticValueId, selectedPeriodId);
+    } else if (hasSelectedFilters.current) {
+      // Clear any previously fetched statement as soon as one of the two
+      // filters is removed, so a cleared filter never shows stale data.
+      resetPartyLedgerBalance();
+    }
+  }, [fetchPartyLedgerBalance, resetPartyLedgerBalance, selectedParty?.analyticValueId, selectedPeriodId]);
 
   if (!hasLedgerReportingRight(rights)) {
     return <Alert severity="error">{formatMessage(intl, "ledger", "ledger.accessDenied")}</Alert>;
   }
 
-  const ledgerData = partyLedgerBalance?.data || null;
-  const showMockDataNotice = !!selectedParty?.analyticValueId && !!selectedPeriodId;
-  const balanceInfo = useMemo(() => formatSignedBalance(ledgerData?.balance ?? 0), [ledgerData?.balance]);
-
   const transactions = ledgerData?.transactions || [];
   const carriedForwardBalance = ledgerData?.carriedForwardBalance ?? 0;
-
-  useEffect(() => {
-    if (selectedParty?.analyticValueId && selectedPeriodId) {
-      fetchPartyLedgerBalanceMock(selectedParty.analyticValueId, selectedPeriodId);
-    }
-  }, [fetchPartyLedgerBalanceMock, selectedParty?.analyticValueId, selectedPeriodId]);
 
   return (
     <StyledPage>
@@ -112,32 +116,24 @@ const PartyLedgerPage = ({ intl, modulesManager, rights, partyLedgerBalance, fet
             </StyledPaper>
           </Grid>
 
-          <Grid size={12}>
-            <StyledPaper className="paper">
-              <Grid container alignItems="center" direction="row" className="paperHeader">
-                <Grid className="paperHeaderTitle">
-                  <Typography>{formatMessage(intl, "ledger", "ledger.partyLedgerPage.balanceTitle")}</Typography>
-                </Grid>
-              </Grid>
-              <Divider />
-              <Box className="paperBody">
-                <Typography variant="h4">
-                  {formatAmount(modulesManager, intl, Math.abs(Number(ledgerData?.balance) || 0))}
-                </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  {formatMessage(intl, "ledger", `ledger.balance.${balanceInfo.legend}`)}
-                </Typography>
-              </Box>
-            </StyledPaper>
-          </Grid>
-
-          {showMockDataNotice ? (
+          {ledgerData ? (
             <Grid size={12}>
-              <Box className="paperBody">
-                <Alert severity="info">
-                  Demo data shown until the real backend response is available for this party and period.
-                </Alert>
-              </Box>
+              <StyledPaper className="paper">
+                <Grid container alignItems="center" direction="row" className="paperHeader">
+                  <Grid className="paperHeaderTitle">
+                    <Typography>{formatMessage(intl, "ledger", "ledger.partyLedgerPage.balanceTitle")}</Typography>
+                  </Grid>
+                </Grid>
+                <Divider />
+                <Box className="paperBody">
+                  <Typography variant="h4">
+                    {formatAmount(modulesManager, intl, ledgerData?.balance)}
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    {formatMessage(intl, "ledger", `ledger.balance.${balanceInfo.legend}`)}
+                  </Typography>
+                </Box>
+              </StyledPaper>
             </Grid>
           ) : null}
 
@@ -222,6 +218,6 @@ const mapStateToProps = (state) => ({
   partyLedgerBalance: state.ledger.partyLedgerBalance,
 });
 
-const mapDispatchToProps = { fetchPartyLedgerBalanceMock };
+const mapDispatchToProps = { fetchPartyLedgerBalance, resetPartyLedgerBalance };
 
 export default withModulesManager(injectIntl(connect(mapStateToProps, mapDispatchToProps)(PartyLedgerPage)));
